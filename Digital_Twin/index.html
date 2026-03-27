@@ -1,0 +1,770 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Interactive EV Digital Twin — Real-time 3D visualization and simulation of an electric vehicle." />
+  <title>EV Digital Twin — Electric Vehicle Simulator</title>
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Orbitron:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+
+  <style>
+    /* ===== Reset & Base ===== */
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg-dark: #0a0e17;
+      --glass-bg: rgba(15, 23, 42, 0.72);
+      --glass-border: rgba(100, 180, 255, 0.15);
+      --accent: #38bdf8;
+      --accent-glow: rgba(56, 189, 248, 0.35);
+      --eco-accent: #22d3ee;
+      --sport-accent: #f43f5e;
+      --text-primary: #e2e8f0;
+      --text-secondary: #94a3b8;
+      --danger: #ef4444;
+      --warning: #f59e0b;
+      --success: #10b981;
+      --font-ui: 'Inter', system-ui, sans-serif;
+      --font-data: 'Orbitron', monospace;
+      --radius: 16px;
+    }
+
+    body {
+      font-family: var(--font-ui);
+      background: var(--bg-dark);
+      color: var(--text-primary);
+      overflow: hidden;
+      height: 100vh;
+      width: 100vw;
+    }
+
+    canvas { display: block; }
+
+    /* ===== Loading Screen ===== */
+    #loading-screen {
+      position: fixed; inset: 0; z-index: 1000;
+      background: var(--bg-dark);
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      transition: opacity 0.8s ease;
+    }
+    #loading-screen.hidden { opacity: 0; pointer-events: none; }
+    .loader-ring {
+      width: 80px; height: 80px;
+      border: 3px solid rgba(56, 189, 248, 0.1);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loader-text {
+      margin-top: 24px; font-family: var(--font-data);
+      font-size: 14px; color: var(--accent);
+      letter-spacing: 3px; text-transform: uppercase;
+    }
+    .loader-bar-track {
+      margin-top: 16px; width: 240px; height: 3px;
+      background: rgba(56, 189, 248, 0.1); border-radius: 2px; overflow: hidden;
+    }
+    .loader-bar-fill {
+      height: 100%; width: 0%; background: var(--accent);
+      border-radius: 2px; transition: width 0.3s;
+    }
+
+    /* ===== Header ===== */
+    #header {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+      padding: 16px 28px;
+      display: flex; align-items: center; justify-content: space-between;
+      background: linear-gradient(180deg, rgba(10,14,23,0.95) 0%, transparent 100%);
+      pointer-events: none;
+    }
+    #header > * { pointer-events: auto; }
+    .brand {
+      display: flex; align-items: center; gap: 12px;
+    }
+    .brand-icon {
+      width: 36px; height: 36px; border-radius: 10px;
+      background: linear-gradient(135deg, var(--accent), #818cf8);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px;
+    }
+    .brand h1 {
+      font-family: var(--font-data); font-size: 16px;
+      font-weight: 700; letter-spacing: 2px;
+    }
+    .brand span { color: var(--accent); }
+    .header-status {
+      display: flex; align-items: center; gap: 16px;
+      font-size: 12px; color: var(--text-secondary);
+    }
+    .status-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--success); box-shadow: 0 0 8px var(--success);
+      animation: pulse-dot 2s ease infinite;
+    }
+    .status-dot.offline { background: var(--danger); box-shadow: 0 0 8px var(--danger); }
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(0.8); }
+    }
+
+    /* ===== Dashboard Panel ===== */
+    #dashboard {
+      position: fixed; top: 80px; right: 20px; z-index: 100;
+      width: 300px; max-height: calc(100vh - 100px);
+      display: flex; flex-direction: column; gap: 12px;
+      overflow-y: auto; scrollbar-width: thin;
+      scrollbar-color: rgba(56,189,248,0.2) transparent;
+      padding-right: 4px;
+    }
+    #dashboard::-webkit-scrollbar { width: 4px; }
+    #dashboard::-webkit-scrollbar-thumb {
+      background: rgba(56,189,248,0.2); border-radius: 2px;
+    }
+
+    .panel {
+      background: var(--glass-bg);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      padding: 20px;
+      transition: border-color 0.3s, box-shadow 0.3s;
+    }
+    .panel:hover {
+      border-color: rgba(100, 180, 255, 0.3);
+      box-shadow: 0 0 30px rgba(56, 189, 248, 0.05);
+    }
+    .panel-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 14px;
+    }
+    .panel-title {
+      font-size: 11px; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 2px;
+      color: var(--text-secondary);
+    }
+    .panel-badge {
+      font-size: 9px; font-weight: 700;
+      padding: 3px 8px; border-radius: 20px;
+      text-transform: uppercase; letter-spacing: 1px;
+    }
+    .badge-eco {
+      background: rgba(34, 211, 238, 0.15); color: var(--eco-accent);
+      border: 1px solid rgba(34, 211, 238, 0.3);
+    }
+    .badge-normal {
+      background: rgba(168, 85, 247, 0.15); color: #a855f7;
+      border: 1px solid rgba(168, 85, 247, 0.3);
+    }
+    .badge-sport {
+      background: rgba(244, 63, 94, 0.15); color: var(--sport-accent);
+      border: 1px solid rgba(244, 63, 94, 0.3);
+    }
+    .badge-wet {
+      background: rgba(45, 212, 191, 0.15); color: #2dd4bf;
+      border: 1px solid rgba(45, 212, 191, 0.3);
+    }
+
+    /* ===== Gauge Values ===== */
+    .gauge-row {
+      display: flex; align-items: flex-end; gap: 6px; margin-bottom: 8px;
+    }
+    .gauge-value {
+      font-family: var(--font-data); font-size: 36px;
+      font-weight: 700; line-height: 1;
+      transition: color 0.4s;
+    }
+    .gauge-unit {
+      font-size: 13px; font-weight: 500;
+      color: var(--text-secondary); padding-bottom: 4px;
+    }
+
+    /* Progress Bar */
+    .progress-track {
+      width: 100%; height: 6px; border-radius: 3px;
+      background: rgba(255,255,255,0.06); overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%; border-radius: 3px;
+      transition: width 0.6s cubic-bezier(0.22, 1, 0.36, 1), background 0.4s;
+    }
+
+    .gauge-sub {
+      display: flex; justify-content: space-between;
+      font-size: 10px; color: var(--text-secondary);
+      margin-top: 6px;
+    }
+
+    /* ===== Temperature Gauge Ring ===== */
+    .temp-container { display: flex; align-items: center; gap: 20px; }
+    .temp-ring-wrap {
+      position: relative; width: 80px; height: 80px; flex-shrink: 0;
+    }
+    .temp-ring-wrap svg { transform: rotate(-90deg); }
+    .temp-ring-bg {
+      fill: none; stroke: rgba(255,255,255,0.06); stroke-width: 6;
+    }
+    .temp-ring-fill {
+      fill: none; stroke-width: 6; stroke-linecap: round;
+      transition: stroke-dashoffset 0.6s ease, stroke 0.4s;
+    }
+    .temp-center {
+      position: absolute; inset: 0;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+    }
+    .temp-value {
+      font-family: var(--font-data); font-size: 20px; font-weight: 700;
+    }
+    .temp-label { font-size: 9px; color: var(--text-secondary); margin-top: 2px; }
+    .temp-info { display: flex; flex-direction: column; gap: 6px; }
+    .temp-info-row {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 11px; color: var(--text-secondary);
+    }
+    .temp-info-dot {
+      width: 6px; height: 6px; border-radius: 50%;
+    }
+
+    /* ===== Controls Panel ===== */
+    .controls-row {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;
+    }
+    .ctrl-btn {
+      padding: 10px; border: 1px solid var(--glass-border);
+      border-radius: 10px; background: rgba(255,255,255,0.03);
+      color: var(--text-primary); font-family: var(--font-ui);
+      font-size: 11px; font-weight: 600; cursor: pointer;
+      text-transform: uppercase; letter-spacing: 1px;
+      transition: all 0.25s;
+      display: flex; align-items: center; justify-content: center; gap: 6px;
+    }
+    .ctrl-btn:hover {
+      background: rgba(255,255,255,0.08);
+      border-color: var(--accent);
+    }
+    .ctrl-btn.active {
+      background: rgba(56, 189, 248, 0.12);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    .ctrl-btn.normal-active {
+      background: rgba(168, 85, 247, 0.12);
+      border-color: #a855f7;
+      color: #a855f7;
+    }
+    .ctrl-btn.sport-active {
+      background: rgba(244, 63, 94, 0.12);
+      border-color: var(--sport-accent);
+      color: var(--sport-accent);
+    }
+    .ctrl-btn.wet-active {
+      background: rgba(45, 212, 191, 0.12);
+      border-color: #2dd4bf;
+      color: #2dd4bf;
+    }
+    .ctrl-btn .icon { font-size: 14px; }
+
+    /* Sim toggle button */
+    .sim-btn {
+      width: 100%; padding: 12px; margin-top: 8px;
+      border: 1px solid; border-radius: 10px;
+      background: transparent; font-family: var(--font-ui);
+      font-size: 12px; font-weight: 700; cursor: pointer;
+      text-transform: uppercase; letter-spacing: 2px;
+      transition: all 0.3s;
+    }
+    .sim-btn.running {
+      border-color: var(--danger); color: var(--danger);
+    }
+    .sim-btn.running:hover {
+      background: rgba(239, 68, 68, 0.12);
+    }
+    .sim-btn.stopped {
+      border-color: var(--success); color: var(--success);
+    }
+    .sim-btn.stopped:hover {
+      background: rgba(16, 185, 129, 0.12);
+    }
+
+    /* ===== Alert Toast ===== */
+    #alert-container {
+      position: fixed; top: 80px; left: 50%;
+      transform: translateX(-50%); z-index: 200;
+      display: flex; flex-direction: column; gap: 8px;
+    }
+    .alert-toast {
+      padding: 12px 24px; border-radius: 12px;
+      font-size: 13px; font-weight: 600;
+      display: flex; align-items: center; gap: 10px;
+      animation: slideIn 0.4s ease;
+      border: 1px solid;
+    }
+    .alert-toast.warning {
+      background: rgba(245, 158, 11, 0.15);
+      border-color: rgba(245, 158, 11, 0.4);
+      color: var(--warning);
+    }
+    .alert-toast.danger {
+      background: rgba(239, 68, 68, 0.15);
+      border-color: rgba(239, 68, 68, 0.4);
+      color: var(--danger);
+    }
+    .alert-toast.fadeOut { animation: fadeOut 0.4s ease forwards; }
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateY(-20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes fadeOut {
+      to { opacity: 0; transform: translateY(-20px); }
+    }
+
+    /* ===== Info Panel (Component Click) ===== */
+    #info-panel {
+      position: fixed; bottom: 24px; left: 50%;
+      transform: translateX(-50%); z-index: 100;
+      background: var(--glass-bg); border: 1px solid var(--glass-border);
+      border-radius: var(--radius); backdrop-filter: blur(20px);
+      padding: 20px 28px; min-width: 340px;
+      opacity: 0; pointer-events: none;
+      transition: opacity 0.35s, transform 0.35s;
+    }
+    #info-panel.visible {
+      opacity: 1; pointer-events: all;
+      animation: slideUp 0.35s ease;
+    }
+    @keyframes slideUp {
+      from { transform: translateX(-50%) translateY(20px); }
+      to { transform: translateX(-50%) translateY(0); }
+    }
+    .info-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 12px;
+    }
+    .info-title {
+      font-family: var(--font-data); font-size: 14px;
+      font-weight: 700; letter-spacing: 1px;
+    }
+    .info-close {
+      width: 28px; height: 28px; border-radius: 8px;
+      background: rgba(255,255,255,0.05); border: none;
+      color: var(--text-secondary); cursor: pointer;
+      font-size: 16px; display: flex; align-items: center; justify-content: center;
+      transition: background 0.2s;
+    }
+    .info-close:hover { background: rgba(255,255,255,0.12); }
+    .info-body {
+      font-size: 13px; color: var(--text-secondary); line-height: 1.6;
+    }
+    .info-body .info-stat {
+      display: flex; justify-content: space-between;
+      padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.04);
+    }
+    .info-stat-val { color: var(--text-primary); font-weight: 600; }
+
+    /* ===== Energy Flow Indicator ===== */
+    #energy-flow-label {
+      position: fixed; bottom: 24px; right: 20px; z-index: 100;
+      display: flex; align-items: center; gap: 8px;
+      font-size: 11px; color: var(--text-secondary);
+      text-transform: uppercase; letter-spacing: 1px;
+    }
+    .energy-dots {
+      display: flex; gap: 4px;
+    }
+    .energy-dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--accent);
+      animation: flow 1.2s ease infinite;
+    }
+    .energy-dot:nth-child(2) { animation-delay: 0.2s; }
+    .energy-dot:nth-child(3) { animation-delay: 0.4s; }
+    .energy-dot:nth-child(4) { animation-delay: 0.6s; }
+    @keyframes flow {
+      0%, 100% { opacity: 0.15; transform: scale(0.7); }
+      50% { opacity: 1; transform: scale(1.2); }
+    }
+
+
+
+    /* ===== Pulse Connection ===== */
+    .connection-pulse {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--success);
+      box-shadow: 0 0 10px var(--success);
+      display: inline-block; margin-right: 6px;
+      animation: conn-pulse 2s infinite;
+    }
+    @keyframes conn-pulse {
+      0%, 100% { opacity: 0.4; transform: scale(0.8); }
+      50% { opacity: 1; transform: scale(1.2); }
+    }
+
+    /* ===== Bottom Left Instructions ===== */
+    #instructions {
+      position: fixed; bottom: 24px; left: 24px; z-index: 100;
+      font-size: 11px; color: var(--text-secondary);
+      line-height: 1.8; opacity: 0.6; pointer-events: none;
+    }
+    #instructions kbd {
+      padding: 2px 6px; border-radius: 4px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.1);
+      font-family: var(--font-ui); font-size: 10px;
+    }
+
+    /* ===== AI Autopilot Panel ===== */
+    .ai-panel { border-color: rgba(168, 85, 247, 0.25); }
+    .ai-panel:hover { border-color: rgba(168, 85, 247, 0.4); box-shadow: 0 0 30px rgba(168, 85, 247, 0.08); }
+    .ai-panel.ai-active {
+      border-color: rgba(168, 85, 247, 0.5);
+      box-shadow: 0 0 20px rgba(168, 85, 247, 0.12);
+    }
+    .ai-toggle {
+      width: 100%; padding: 10px; margin-bottom: 12px;
+      border: 1px solid rgba(168, 85, 247, 0.4); border-radius: 10px;
+      background: rgba(168, 85, 247, 0.08);
+      color: #a855f7; font-family: var(--font-ui);
+      font-size: 12px; font-weight: 700; cursor: pointer;
+      text-transform: uppercase; letter-spacing: 2px;
+      transition: all 0.3s;
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+    }
+    .ai-toggle:hover { background: rgba(168, 85, 247, 0.16); }
+    .ai-toggle.active {
+      background: rgba(168, 85, 247, 0.2);
+      border-color: #a855f7;
+      animation: ai-pulse 2s ease infinite;
+    }
+    @keyframes ai-pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(168, 85, 247, 0.3); }
+      50% { box-shadow: 0 0 12px 4px rgba(168, 85, 247, 0.15); }
+    }
+    .ai-metrics {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+      margin-bottom: 12px;
+    }
+    .ai-metric {
+      padding: 8px 10px; border-radius: 8px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.04);
+    }
+    .ai-metric-label {
+      font-size: 9px; text-transform: uppercase;
+      letter-spacing: 1px; color: var(--text-secondary);
+      margin-bottom: 4px;
+    }
+    .ai-metric-value {
+      font-family: var(--font-data); font-size: 16px;
+      font-weight: 700; color: #c084fc;
+    }
+    .ai-action-display {
+      padding: 10px 14px; border-radius: 10px;
+      background: rgba(168, 85, 247, 0.06);
+      border: 1px solid rgba(168, 85, 247, 0.15);
+      margin-bottom: 12px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .ai-action-label { font-size: 10px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 1px; }
+    .ai-action-name {
+      font-family: var(--font-data); font-size: 13px;
+      font-weight: 600; color: #e9d5ff;
+    }
+    .ai-exploring { font-size: 9px; padding: 2px 8px; border-radius: 10px; font-weight: 600; }
+    .ai-exploring.explore {
+      background: rgba(251, 191, 36, 0.12); color: var(--warning);
+      border: 1px solid rgba(251, 191, 36, 0.3);
+    }
+    .ai-exploring.exploit {
+      background: rgba(16, 185, 129, 0.12); color: var(--success);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+    /* Q-Values Mini Bars */
+    .qval-bars { display: flex; flex-direction: column; gap: 4px; }
+    .qval-row {
+      display: flex; align-items: center; gap: 8px; font-size: 10px;
+    }
+    .qval-label { width: 64px; color: var(--text-secondary); flex-shrink: 0; }
+    .qval-bar-track {
+      flex: 1; height: 10px; border-radius: 4px;
+      background: rgba(255,255,255,0.04); overflow: hidden;
+    }
+    .qval-bar-fill {
+      height: 100%; border-radius: 4px;
+      background: linear-gradient(90deg, #7c3aed, #c084fc);
+      transition: width 0.4s ease;
+      min-width: 2px;
+    }
+    .qval-bar-fill.best { background: linear-gradient(90deg, #a855f7, #e9d5ff); }
+    .qval-num {
+      width: 42px; text-align: right; font-family: var(--font-data);
+      font-size: 9px; color: var(--text-secondary);
+    }
+
+    /* ===== Responsive ===== */
+    @media (max-width: 768px) {
+      #dashboard { width: 260px; right: 10px; top: 70px; }
+      .gauge-value { font-size: 28px; }
+      #info-panel { min-width: 280px; }
+    }
+
+    .back-btn {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 16px; border-radius: 8px;
+      background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
+      color: var(--text-primary); text-decoration: none;
+      font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;
+      transition: all 0.3s;
+    }
+    .back-btn:hover { background: rgba(56, 189, 248, 0.15); border-color: rgba(56, 189, 248, 0.4); color: var(--accent); }
+
+  </style>
+</head>
+
+<body>
+  <!-- Loading Screen -->
+  <div id="loading-screen">
+    <div class="loader-ring"></div>
+    <div class="loader-text">Initializing Digital Twin</div>
+    <div class="loader-bar-track">
+      <div class="loader-bar-fill" id="load-progress"></div>
+    </div>
+  </div>
+
+  <!-- Focused Vehicle Header -->
+  <header id="header">
+    <div class="brand">
+      <a href="/" class="back-btn">← Back to Fleet</a>
+      <div class="brand-icon">⚡</div>
+      <h1 id="active-vehicle-title">EV DIGITAL TWIN</h1>
+    </div>
+    <div class="header-status">
+      <div class="status-dot" id="status-dot"></div>
+      <span id="status-label">CONNECTED · LIVE DATA</span>
+    </div>
+  </header>
+
+  <!-- Dashboard Panels -->
+  <aside id="dashboard">
+    <!-- Battery -->
+    <div class="panel" id="panel-battery">
+      <div class="panel-header">
+        <span class="panel-title">🔋 Battery</span>
+        <span class="panel-badge badge-eco" id="mode-badge">ECO</span>
+      </div>
+      <div class="gauge-row">
+        <span class="gauge-value" id="val-battery" style="color:var(--success)">85</span>
+        <span class="gauge-unit">%</span>
+      </div>
+      <div class="progress-track">
+        <div class="progress-fill" id="bar-battery" style="width:85%;background:var(--success)"></div>
+      </div>
+      <div class="gauge-sub">
+        <span>Range: ~<span id="val-range">320</span> km</span>
+        <span>SoH: <strong id="val-health" style="color:var(--success)">100.0%</strong></span>
+        <span id="battery-status">Discharging</span>
+      </div>
+    </div>
+
+    <!-- RPM -->
+    <div class="panel" id="panel-rpm">
+      <div class="panel-header">
+        <span class="panel-title">⚙️ Motor RPM</span>
+      </div>
+      <div class="gauge-row">
+        <span class="gauge-value" id="val-rpm" style="color:var(--accent)">3000</span>
+        <span class="gauge-unit">RPM</span>
+      </div>
+      <div class="progress-track">
+        <div class="progress-fill" id="bar-rpm" style="width:30%;background:var(--accent)"></div>
+      </div>
+      <div class="gauge-sub">
+        <span>Power: <span id="val-power">42</span> kW</span>
+        <span>Torque: <span id="val-torque">180</span> Nm</span>
+      </div>
+    </div>
+
+    <!-- Temperature -->
+    <div class="panel" id="panel-temp">
+      <div class="panel-header">
+        <span class="panel-title">🌡️ Temperature</span>
+      </div>
+      <div class="temp-container">
+        <div class="temp-ring-wrap">
+          <svg viewBox="0 0 80 80" width="80" height="80">
+            <circle class="temp-ring-bg" cx="40" cy="40" r="34" />
+            <circle class="temp-ring-fill" id="temp-ring" cx="40" cy="40" r="34"
+              stroke-dasharray="213.6" stroke-dashoffset="160" stroke="var(--accent)" />
+          </svg>
+          <div class="temp-center">
+            <span class="temp-value" id="val-temp">45</span>
+            <span class="temp-label">°C</span>
+          </div>
+        </div>
+        <div class="temp-info">
+          <div class="temp-info-row">
+            <div class="temp-info-dot" style="background:var(--success)"></div>
+            <span>Motor: <strong id="val-motor-temp">38</strong>°C</span>
+          </div>
+          <div class="temp-info-row">
+            <div class="temp-info-dot" style="background:var(--accent)"></div>
+            <span>Battery: <strong id="val-bat-temp">32</strong>°C</span>
+          </div>
+          <div class="temp-info-row">
+            <div class="temp-info-dot" style="background:var(--warning)"></div>
+            <span>Threshold: <strong>85</strong>°C</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Controls -->
+    <div class="panel" id="panel-controls">
+      <div class="panel-header">
+        <span class="panel-title">🎮 Controls</span>
+      </div>
+      <div class="controls-row">
+        <button class="ctrl-btn active" id="btn-eco" onclick="setMode('eco')">
+          <span class="icon">🌿</span> Eco
+        </button>
+        <button class="ctrl-btn" id="btn-normal" onclick="setMode('normal')">
+          <span class="icon">🏙️</span> Normal
+        </button>
+        <button class="ctrl-btn" id="btn-sport" onclick="setMode('sport')">
+          <span class="icon">🏎️</span> Sport
+        </button>
+        <button class="ctrl-btn" id="btn-wet" onclick="setMode('wet')">
+          <span class="icon">❄️</span> Wet
+        </button>
+      </div>
+      <button class="sim-btn running" id="btn-sim" onclick="toggleSim()">
+        ⏸ Stop Simulation
+      </button>
+
+      <!-- Manual Overrides -->
+      <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.06);">
+        <div class="panel-header" style="margin-bottom: 8px;">
+          <span class="panel-title" style="font-size: 9px; opacity: 0.7;">🕹️ Manual Sensor Overrides</span>
+        </div>
+        
+        <div style="margin-bottom: 10px;">
+          <div style="display: flex; justify-content: space-between; font-size: 10px; margin-bottom: 4px;">
+            <span style="color: var(--text-secondary)">RPM Override</span>
+            <span id="label-rpm-override" style="color: var(--accent)">Auto</span>
+          </div>
+          <input type="range" id="slider-rpm" min="0" max="10000" step="100" value="3000" 
+            style="width: 100%; height: 4px; appearance: none; background: rgba(255,255,255,0.1); border-radius: 2px; cursor: pointer;">
+          <button onclick="resetOverride('rpm')" style="border: none; background: none; color: #666; font-size: 9px; cursor: pointer; padding: 2px 0;">Reset to Auto</button>
+        </div>
+
+        <div>
+          <div style="display: flex; justify-content: space-between; font-size: 10px; margin-bottom: 4px;">
+            <span style="color: var(--text-secondary)">Temp Override</span>
+            <span id="label-temp-override" style="color: var(--warning)">Auto</span>
+          </div>
+          <input type="range" id="slider-temp" min="20" max="120" step="1" value="45" 
+            style="width: 100%; height: 4px; appearance: none; background: rgba(255,255,255,0.1); border-radius: 2px; cursor: pointer;">
+          <button onclick="resetOverride('temp')" style="border: none; background: none; color: #666; font-size: 9px; cursor: pointer; padding: 2px 0;">Reset to Auto</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- AI Autopilot -->
+    <div class="panel ai-panel" id="panel-ai">
+      <div class="panel-header">
+        <span class="panel-title">🧠 AI Autopilot</span>
+        <span class="ai-exploring explore" id="ai-phase">EXPLORING</span>
+      </div>
+      <button class="ai-toggle" id="btn-ai" onclick="toggleAI()">
+        <span>🤖</span> Enable AI Autopilot
+      </button>
+      <div class="ai-action-display">
+        <div>
+          <div class="ai-action-label">Current Action</div>
+          <div class="ai-action-name" id="ai-action">—</div>
+        </div>
+        <div style="text-align:right">
+          <div class="ai-action-label">Reward</div>
+          <div class="ai-action-name" id="ai-reward">0.0</div>
+        </div>
+      </div>
+      <div class="ai-metrics">
+        <div class="ai-metric">
+          <div class="ai-metric-label">Epsilon</div>
+          <div class="ai-metric-value" id="ai-epsilon">1.00</div>
+        </div>
+        <div class="ai-metric">
+          <div class="ai-metric-label">Episode</div>
+          <div class="ai-metric-value" id="ai-episode">0</div>
+        </div>
+        <div class="ai-metric">
+          <div class="ai-metric-label">Avg Reward</div>
+          <div class="ai-metric-value" id="ai-avg-reward">0.0</div>
+        </div>
+        <div class="ai-metric">
+          <div class="ai-metric-label">Loss</div>
+          <div class="ai-metric-value" id="ai-loss">0.000</div>
+        </div>
+      </div>
+      <div class="qval-bars" id="qval-bars">
+        <div class="qval-row"><span class="qval-label">Eco Low</span><div class="qval-bar-track"><div class="qval-bar-fill" id="qbar-0" style="width:12%"></div></div><span class="qval-num" id="qval-0">0.00</span></div>
+        <div class="qval-row"><span class="qval-label">Eco High</span><div class="qval-bar-track"><div class="qval-bar-fill" id="qbar-1" style="width:12%"></div></div><span class="qval-num" id="qval-1">0.00</span></div>
+        <div class="qval-row"><span class="qval-label">Norm Low</span><div class="qval-bar-track"><div class="qval-bar-fill" id="qbar-2" style="width:12%"></div></div><span class="qval-num" id="qval-2">0.00</span></div>
+        <div class="qval-row"><span class="qval-label">Norm High</span><div class="qval-bar-track"><div class="qval-bar-fill" id="qbar-3" style="width:12%"></div></div><span class="qval-num" id="qval-3">0.00</span></div>
+        <div class="qval-row"><span class="qval-label">Sport Low</span><div class="qval-bar-track"><div class="qval-bar-fill" id="qbar-4" style="width:12%"></div></div><span class="qval-num" id="qval-4">0.00</span></div>
+        <div class="qval-row"><span class="qval-label">Sport High</span><div class="qval-bar-track"><div class="qval-bar-fill" id="qbar-5" style="width:12%"></div></div><span class="qval-num" id="qval-5">0.00</span></div>
+        <div class="qval-row"><span class="qval-label">Wet Low</span><div class="qval-bar-track"><div class="qval-bar-fill" id="qbar-6" style="width:12%"></div></div><span class="qval-num" id="qval-6">0.00</span></div>
+        <div class="qval-row"><span class="qval-label">Wet High</span><div class="qval-bar-track"><div class="qval-bar-fill" id="qbar-7" style="width:12%"></div></div><span class="qval-num" id="qval-7">0.00</span></div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Alert Container -->
+  <div id="alert-container"></div>
+
+  <!-- Component Info Panel -->
+  <div id="info-panel">
+    <div class="info-header">
+      <span class="info-title" id="info-title">Component</span>
+      <button class="info-close" onclick="closeInfoPanel()">✕</button>
+    </div>
+    <div class="info-body" id="info-body"></div>
+  </div>
+
+  <!-- Energy Flow Indicator -->
+  <div id="energy-flow-label">
+    <span>Energy Flow</span>
+    <div class="energy-dots">
+      <div class="energy-dot"></div>
+      <div class="energy-dot"></div>
+      <div class="energy-dot"></div>
+      <div class="energy-dot"></div>
+    </div>
+    <span>Battery → Motor</span>
+  </div>
+
+  <!-- Instructions -->
+  <div id="instructions">
+    <kbd>Click</kbd> component to inspect &nbsp;·&nbsp;
+    <kbd>Drag</kbd> rotate &nbsp;·&nbsp;
+    <kbd>Scroll</kbd> zoom
+  </div>
+
+  <!-- Three.js via ES Module CDN -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.163.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.163.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
