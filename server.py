@@ -1,7 +1,6 @@
 """
-EV Digital Twin - Backend Server
-Flask server providing simulated EV telemetry data, RL agent integration,
-and serving the frontend.
+EV Digital Twin - Fleet Management Backend
+Flask server providing multi-vehicle telemetry and independent RL agents.
 """
 
 from flask import Flask, jsonify, request, send_from_directory
@@ -15,37 +14,24 @@ app = Flask(__name__, static_folder='.', static_url_path='')
 CORS(app)
 
 # ---------------------------------------------------------------------------
-# RL Agent (lazy-loaded to handle missing PyTorch gracefully)
+# RL Agent Multi-Instancing
 # ---------------------------------------------------------------------------
-rl_agent = None
+RL_AGENTS = {}
 rl_available = False
 
 try:
     from rl_agent import DQNAgent
-    rl_agent = DQNAgent()
     rl_available = True
-    print("🧠 RL Agent initialized (DQN with PyTorch)")
+    print("🧠 RL Agent class loaded (Multi-instance ready)")
 except ImportError as e:
     print(f"⚠️  RL Agent not available (PyTorch not installed): {e}")
-except Exception as e:
-    print(f"⚠️  RL Agent initialization failed: {e}")
 
 # ---------------------------------------------------------------------------
-# Simulation state
+# Fleet Configuration
 # ---------------------------------------------------------------------------
-sim_state = {
-    "battery": 85.0,
-    "rpm": 3000,
-    "temp": 45.0,
-    "mode": "eco",          # eco | sport
-    "running": True,
-    "start_time": time.time(),
-    "last_update": time.time(),
-    "override_rpm": None,
-    "override_temp": None,
-}
+VEHICLE_IDS = ["EV-Alpha", "EV-Beta", "EV-Gamma"]
 
-# Mode profiles — throttle variants included for RL
+# Mode profiles
 MODE_PROFILES = {
     "eco":    {"rpm_base": 2500, "rpm_range": 1500, "temp_base": 40, "temp_range": 15, "drain_rate": 0.02},
     "normal": {"rpm_base": 3500, "rpm_range": 2000, "temp_base": 50, "temp_range": 20, "drain_rate": 0.04},
@@ -53,163 +39,186 @@ MODE_PROFILES = {
     "wet":    {"rpm_base": 2800, "rpm_range": 1200, "temp_base": 42, "temp_range": 12, "drain_rate": 0.03},
 }
 
-THROTTLE_MULTIPLIER = {
-    "low": 0.6,
-    "high": 1.0,
-}
+THROTTLE_MULTIPLIER = {"low": 0.6, "high": 1.0}
 
-# Current throttle (controlled by RL or default)
-current_throttle = "high"
+# Initialize vehicle states
+VEHICLES = {}
+for vid in VEHICLE_IDS:
+    VEHICLES[vid] = {
+        "id": vid,
+        "battery": random.uniform(70.0, 95.0),
+        "rpm": 0,
+        "temp": 30.0,
+        "mode": random.choice(["eco", "normal"]),
+        "throttle": "high",
+        "running": True,
+        "start_time": time.time(),
+        "last_update": time.time(),
+        "override_rpm": None,
+        "override_temp": None,
+        "step_counter": 0,
+        "last_ai_cmd": {"mode": "eco", "throttle": "low"}
+    }
+    
+    if rl_available:
+        RL_AGENTS[vid] = DQNAgent()
+        print(f"✅ Created RL agent for {vid}")
 
-
-def update_simulation():
-    """Generate realistic oscillating EV telemetry values."""
-    global current_throttle
+def update_vehicle(vid):
+    """Step the simulation for a specific vehicle."""
+    v = VEHICLES[vid]
+    agent = RL_AGENTS.get(vid)
+    
     now = time.time()
-    elapsed = now - sim_state["start_time"]
-    dt = now - sim_state["last_update"]
-    sim_state["last_update"] = now
+    elapsed = now - v["start_time"]
+    dt = now - v["last_update"]
+    v["last_update"] = now
 
-    if not sim_state["running"]:
+    # Reset last_update if it was zero or from previous run
+    if dt > 100 or dt < 0:
+        dt = 0.05
+
+    if not v["running"]:
         return
 
-    # --- RL Agent step (if enabled) ---
-    if rl_agent and rl_agent.enabled:
-        if not hasattr(rl_agent, "step_counter"):
-            rl_agent.step_counter = 0
-            rl_agent.last_cmd = {"mode": "eco", "throttle": "low"}
+    # --- RL Agent step (independent for each car) ---
+    if agent and agent.enabled:
+        v["step_counter"] += 1
+        if v["step_counter"] % 10 == 1:
+            action = agent.step(v)
+            v["last_ai_cmd"] = agent.get_action_command(action)
             
-        rl_agent.step_counter += 1
-        if rl_agent.step_counter % 10 == 1:  # decision every ~10 seconds
-            action = rl_agent.step(sim_state)
-            rl_agent.last_cmd = rl_agent.get_action_command(action)
-            
-        cmd = rl_agent.last_cmd
-        sim_state["mode"] = cmd["mode"]
-        current_throttle = cmd["throttle"]
+        cmd = v["last_ai_cmd"]
+        v["mode"] = cmd["mode"]
+        v["throttle"] = cmd["throttle"]
 
-    profile = MODE_PROFILES[sim_state["mode"]]
-    throttle = THROTTLE_MULTIPLIER.get(current_throttle, 1.0)
+    profile = MODE_PROFILES[v["mode"]]
+    throttle = THROTTLE_MULTIPLIER.get(v["throttle"], 1.0)
 
-    # Battery: drain rate affected by throttle
+    # Battery
     drain = profile["drain_rate"] * throttle * dt + random.uniform(-0.005, 0.005)
-    sim_state["battery"] -= drain
-    if sim_state["battery"] <= 10:
-        sim_state["battery"] = 95.0  # simulate recharge event
-    sim_state["battery"] = max(5.0, min(100.0, sim_state["battery"]))
+    v["battery"] -= drain
+    if v["battery"] <= 10: v["battery"] = 98.0  # Simulated recharge
+    v["battery"] = max(5.0, min(100.0, v["battery"]))
 
-    # RPM: sinusoidal variation scaled by throttle or overridden
-    if sim_state.get("override_rpm") is not None:
-        sim_state["rpm"] = float(sim_state["override_rpm"])
+    # RPM
+    if v.get("override_rpm") is not None:
+        v["rpm"] = float(v["override_rpm"])
     else:
         rpm = profile["rpm_base"] * throttle + profile["rpm_range"] * throttle * math.sin(elapsed * 0.3)
         rpm += random.uniform(-200, 200)
-        sim_state["rpm"] = max(0, round(rpm))
+        v["rpm"] = max(0, round(rpm))
 
-    # Temperature: correlated with RPM + ambient drift or overridden
-    if sim_state.get("override_temp") is not None:
-        sim_state["temp"] = float(sim_state["override_temp"])
+    # Temperature
+    if v.get("override_temp") is not None:
+        v["temp"] = float(v["override_temp"])
     else:
         temp = profile["temp_base"] + profile["temp_range"] * throttle * (0.5 + 0.5 * math.sin(elapsed * 0.15))
         temp += random.uniform(-1, 1)
-        sim_state["temp"] = round(max(20, min(120, temp)), 1)
-
+        v["temp"] = round(max(20, min(120, temp)), 1)
 
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
 @app.route('/')
 def index():
+    return send_from_directory('.', 'fleet.html')
+
+@app.route('/twin')
+def twin():
     return send_from_directory('.', 'index.html')
 
+@app.route('/fleet')
+def fleet_summary():
+    """Return summary of all vehicles."""
+    summary = []
+    for vid in VEHICLE_IDS:
+        update_vehicle(vid)
+        v = VEHICLES[vid]
+        summary.append({
+            "id": vid,
+            "battery": round(v["battery"], 1),
+            "rpm": v["rpm"],
+            "temp": v["temp"],
+            "mode": v["mode"],
+            "running": v["running"],
+            "ai_enabled": RL_AGENTS[vid].enabled if vid in RL_AGENTS else False
+        })
+    return jsonify(summary)
 
-@app.route('/data')
-def data():
-    """Return current simulated EV telemetry as JSON."""
-    update_simulation()
+@app.route('/data/<vid>')
+def vehicle_data(vid):
+    """Return detailed telemetry for one vehicle."""
+    if vid not in VEHICLES:
+        return jsonify({"error": "Vehicle not found"}), 404
+    update_vehicle(vid)
+    v = VEHICLES[vid]
     return jsonify({
-        "battery": round(sim_state["battery"], 1),
-        "rpm": sim_state["rpm"],
-        "temp": sim_state["temp"],
-        "mode": sim_state["mode"],
-        "running": sim_state["running"],
-        "ai_enabled": rl_agent.enabled if rl_agent else False,
+        "id": vid,
+        "battery": round(v["battery"], 1),
+        "rpm": v["rpm"],
+        "temp": v["temp"],
+        "mode": v["mode"],
+        "running": v["running"],
+        "ai_enabled": RL_AGENTS[vid].enabled if vid in RL_AGENTS else False,
     })
 
-
-@app.route('/mode', methods=['POST'])
-def set_mode():
-    """Switch between driving modes."""
+@app.route('/mode/<vid>', methods=['POST'])
+def set_mode(vid):
+    if vid not in VEHICLES: return jsonify({"error": "Not found"}), 404
     body = request.get_json(force=True)
     mode = body.get("mode", "eco").lower()
     if mode in MODE_PROFILES:
-        sim_state["mode"] = mode
-        if rl_agent and rl_agent.enabled:
-            rl_agent.enabled = False  # Disable AI if user manually clicks a mode
-    return jsonify({"mode": sim_state["mode"]})
+        VEHICLES[vid]["mode"] = mode
+        if vid in RL_AGENTS: RL_AGENTS[vid].enabled = False
+    return jsonify({"mode": VEHICLES[vid]["mode"]})
 
-
-@app.route('/override', methods=['POST'])
-def override_state():
-    """Manually override RPM or Temp values for RL agent testing."""
+@app.route('/override/<vid>', methods=['POST'])
+def override_state(vid):
+    if vid not in VEHICLES: return jsonify({"error": "Not found"}), 404
     body = request.get_json(force=True)
+    v = VEHICLES[vid]
     if "rpm" in body:
         val = body["rpm"]
-        sim_state["override_rpm"] = float(val) if val is not None else None
+        v["override_rpm"] = float(val) if val is not None else None
     if "temp" in body:
         val = body["temp"]
-        sim_state["override_temp"] = float(val) if val is not None else None
+        v["override_temp"] = float(val) if val is not None else None
     return jsonify({"success": True})
 
-
-@app.route('/control', methods=['POST'])
-def control():
-    """Start or stop the simulation."""
+@app.route('/control/<vid>', methods=['POST'])
+def control(vid):
+    if vid not in VEHICLES: return jsonify({"error": "Not found"}), 404
     body = request.get_json(force=True)
     action = body.get("action", "toggle")
-    if action == "start":
-        sim_state["running"] = True
-    elif action == "stop":
-        sim_state["running"] = False
-    else:
-        sim_state["running"] = not sim_state["running"]
-    return jsonify({"running": sim_state["running"]})
+    v = VEHICLES[vid]
+    if action == "start": v["running"] = True
+    elif action == "stop": v["running"] = False
+    else: v["running"] = not v["running"]
+    return jsonify({"running": v["running"]})
 
-
-# ---------------------------------------------------------------------------
-# RL Agent Routes
-# ---------------------------------------------------------------------------
-@app.route('/rl/status')
-def rl_status():
-    """Return RL agent training status."""
-    if not rl_agent:
-        return jsonify({"available": False, "error": "PyTorch not installed"})
-    status = rl_agent.get_status()
+@app.route('/rl/status/<vid>')
+def rl_status(vid):
+    if vid not in RL_AGENTS: return jsonify({"available": False})
+    status = RL_AGENTS[vid].get_status()
     status["available"] = True
     return jsonify(status)
 
-
-@app.route('/rl/control', methods=['POST'])
-def rl_control():
-    """Enable or disable the RL autopilot."""
-    if not rl_agent:
-        return jsonify({"available": False, "error": "PyTorch not installed"})
+@app.route('/rl/control/<vid>', methods=['POST'])
+def rl_control(vid):
+    if vid not in RL_AGENTS: return jsonify({"available": False})
     body = request.get_json(force=True)
     action = body.get("action", "toggle")
-    if action == "enable":
-        rl_agent.enabled = True
-    elif action == "disable":
-        rl_agent.enabled = False
-    else:
-        rl_agent.enabled = not rl_agent.enabled
-    return jsonify({"enabled": rl_agent.enabled})
-
+    agent = RL_AGENTS[vid]
+    if action == "enable": agent.enabled = True
+    elif action == "disable": agent.enabled = False
+    else: agent.enabled = not agent.enabled
+    return jsonify({"enabled": agent.enabled})
 
 @app.route('/<path:path>')
 def static_files(path):
     return send_from_directory('.', path)
 
-
 if __name__ == '__main__':
-    print("🚗  EV Digital Twin server starting on http://localhost:5000")
+    print("🚗  EV Fleet Dashboard starting on http://localhost:5000")
     app.run(host='0.0.0.0', port=5000, debug=True)

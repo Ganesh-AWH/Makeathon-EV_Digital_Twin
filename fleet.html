@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EV Fleet Dashboard</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;800&family=Orbitron:wght@500;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-dark: #070a10;
+      --glass-bg: rgba(15, 23, 42, 0.6);
+      --glass-border: rgba(100, 180, 255, 0.15);
+      --accent: #38bdf8;
+      --text-main: #f8fafc;
+      --text-sub: #94a3b8;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: radial-gradient(circle at center, #111827 0%, var(--bg-dark) 100%);
+      color: var(--text-main);
+      font-family: 'Inter', sans-serif;
+      min-height: 100vh;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      overflow: hidden;
+    }
+
+    /* Background Grids & Orbs */
+    .bg-grid {
+      position: absolute; inset: 0; z-index: 0;
+      background-image: 
+        linear-gradient(to right, rgba(255,255,255,0.02) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(255,255,255,0.02) 1px, transparent 1px);
+      background-size: 40px 40px;
+      perspective: 1000px;
+    }
+    .orb {
+      position: absolute; border-radius: 50%; filter: blur(100px); z-index: 0;
+      opacity: 0.15;
+    }
+
+    header {
+      position: absolute; top: 50px; left: 0; width: 100%; text-align: center; z-index: 10;
+    }
+    h1 {
+      font-family: 'Orbitron', sans-serif; font-size: 42px; font-weight: 800;
+      letter-spacing: 6px; color: var(--text-main);
+      text-shadow: 0 0 20px rgba(56, 189, 248, 0.4);
+    }
+    .subtitle { color: var(--accent); font-weight: 600; font-size: 14px; letter-spacing: 4px; margin-top: 8px; text-transform: uppercase; }
+
+    /* Cards Container */
+    .fleet-grid {
+      display: flex; gap: 40px; z-index: 10; margin-top: 60px;
+      perspective: 1000px;
+    }
+
+    /* Individual Card */
+    .card {
+      width: 320px;
+      background: var(--glass-bg);
+      backdrop-filter: blur(20px);
+      border: 1px solid var(--glass-border);
+      border-radius: 24px;
+      padding: 30px;
+      cursor: pointer;
+      transition: all 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
+      position: relative;
+      overflow: hidden;
+    }
+    .card::before {
+      content: ''; position: absolute; inset: 0;
+      background: linear-gradient(180deg, rgba(255,255,255,0.08) 0%, transparent 50%);
+      pointer-events: none;
+    }
+    .card:hover {
+      transform: translateY(-10px) scale(1.02);
+      border-color: rgba(56,189,248,0.5);
+      box-shadow: 0 20px 40px rgba(0,0,0,0.4), 0 0 30px rgba(56,189,248,0.15);
+    }
+    .card:hover .btn-inspect {
+      background: var(--accent); color: #000; box-shadow: 0 0 20px var(--accent);
+    }
+
+    .car-icon {
+      font-size: 64px; text-align: center; margin-bottom: 20px;
+      filter: drop-shadow(0 10px 10px rgba(0,0,0,0.5));
+    }
+
+    .vid-title {
+      font-family: 'Orbitron', monospace;
+      font-size: 24px; font-weight: 800; text-align: center;
+      margin-bottom: 8px; letter-spacing: 2px;
+    }
+
+    .mode-badge {
+      display: block; width: fit-content; margin: 0 auto 30px auto;
+      padding: 4px 12px; border-radius: 20px; font-size: 11px;
+      font-weight: 700; text-transform: uppercase; letter-spacing: 1px;
+      background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
+    }
+    .mode-eco { color: #22d3ee; border-color: rgba(34,211,238,0.3); background: rgba(34,211,238,0.1); }
+    .mode-normal { color: #a855f7; border-color: rgba(168,85,247,0.3); background: rgba(168,85,247,0.1); }
+    .mode-sport { color: #f43f5e; border-color: rgba(244,63,94,0.3); background: rgba(244,63,94,0.1); }
+    .mode-wet { color: #2dd4bf; border-color: rgba(45,212,191,0.3); background: rgba(45,212,191,0.1); }
+
+    .metrics-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px;
+    }
+    .metric {
+      background: rgba(0,0,0,0.4); border-radius: 12px; padding: 12px;
+      border: 1px solid rgba(255,255,255,0.02); text-align: center;
+    }
+    .metric-label { font-size: 10px; color: var(--text-sub); text-transform: uppercase; margin-bottom: 6px; letter-spacing: 1px; }
+    .metric-val { font-family: 'Orbitron', monospace; font-size: 18px; font-weight: 700; color: #fff; }
+
+    .battery-container { margin-bottom: 30px; }
+    .battery-header { display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 8px; font-weight: 600; color: var(--text-sub); }
+    .battery-val { font-family: 'Orbitron', monospace; color: var(--accent); font-size: 14px; }
+    .battery-track { width: 100%; height: 8px; background: rgba(255,255,255,0.05); border-radius: 4px; overflow: hidden; }
+    .battery-fill { height: 100%; background: var(--accent); width: 0%; transition: width 0.5s ease; box-shadow: 0 0 10px var(--accent); }
+
+    .btn-inspect {
+      display: block; width: 100%; padding: 14px; border-radius: 12px;
+      background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
+      color: var(--text-main); font-family: 'Inter', sans-serif; font-size: 12px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 2px; text-decoration: none; text-align: center;
+      transition: all 0.3s;
+    }
+
+  </style>
+</head>
+<body>
+
+  <div class="bg-grid"></div>
+  <div class="orb" style="width: 800px; height: 800px; background: #0ea5e9; top: -200px; left: -200px;"></div>
+  <div class="orb" style="width: 600px; height: 600px; background: #8b5cf6; bottom: -100px; right: -100px;"></div>
+
+  <header>
+    <h1>GLOBAL FLEET COMMAND</h1>
+    <div class="subtitle">Live Telemetry Control Center</div>
+  </header>
+
+  <div class="fleet-grid" id="fleet-container">
+    <!-- Cards will be populated here by JS -->
+  </div>
+
+  <script>
+    const ICONS = { "EV-Alpha": "🚗", "EV-Beta": "🚙", "EV-Gamma": "🚘" };
+
+    async function fetchFleet() {
+      try {
+        const res = await fetch('/fleet');
+        const data = await res.json();
+        renderFleet(data);
+      } catch (e) { console.warn("Failed to fetch fleet data"); }
+    }
+
+    function renderFleet(fleetData) {
+      const container = document.getElementById('fleet-container');
+      
+      fleetData.forEach(car => {
+        let card = document.getElementById('card-' + car.id);
+        
+        let batColor = '#38bdf8'; // accent
+        if (car.battery < 25) batColor = '#ef4444';
+        else if (car.battery < 60) batColor = '#f59e0b';
+
+        if (!card) {
+          card = document.createElement('div');
+          card.className = 'card';
+          card.id = 'card-' + car.id;
+          card.onclick = () => window.location.href = `/twin?vid=${car.id}`;
+          
+          card.innerHTML = `
+            <div class="car-icon">${ICONS[car.id] || "🚙"}</div>
+            <div class="vid-title">${car.id.replace('EV-', '')}</div>
+            <div class="mode-badge" id="badge-${car.id}"></div>
+            
+            <div class="metrics-grid">
+              <div class="metric">
+                <div class="metric-label">Motor RPM</div>
+                <div class="metric-val" id="rpm-${car.id}">--</div>
+              </div>
+              <div class="metric">
+                <div class="metric-label">Core Temp</div>
+                <div class="metric-val" id="temp-${car.id}">--°</div>
+              </div>
+            </div>
+
+            <div class="battery-container">
+              <div class="battery-header">
+                <span>BATTERY</span>
+                <span class="battery-val" id="batval-${car.id}">--%</span>
+              </div>
+              <div class="battery-track">
+                <div class="battery-fill" id="batfill-${car.id}"></div>
+              </div>
+            </div>
+
+            <div class="btn-inspect">Launch Twin</div>
+          `;
+          container.appendChild(card);
+        }
+
+        // Update the existing DOM elements dynamically
+        document.getElementById(`rpm-${car.id}`).textContent = Math.round(car.rpm).toLocaleString();
+        document.getElementById(`temp-${car.id}`).textContent = car.temp.toFixed(1) + '°';
+        document.getElementById(`batval-${car.id}`).textContent = Math.round(car.battery) + '%';
+        document.getElementById(`batval-${car.id}`).style.color = batColor;
+        
+        const batFill = document.getElementById(`batfill-${car.id}`);
+        batFill.style.width = car.battery + '%';
+        batFill.style.background = batColor;
+        batFill.style.boxShadow = `0 0 10px ${batColor}`;
+
+        const badge = document.getElementById(`badge-${car.id}`);
+        badge.className = `mode-badge mode-${car.mode}`;
+        badge.textContent = car.mode;
+      });
+    }
+
+    // Initial load and poll
+    fetchFleet();
+    setInterval(fetchFleet, 1000);
+  </script>
+</body>
+</html>

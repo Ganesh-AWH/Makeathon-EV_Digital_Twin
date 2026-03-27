@@ -38,8 +38,13 @@ const componentGroups = {
   other: [],
 };
 
+// Global Fleet state
+const urlParams = new URLSearchParams(window.location.search);
+let currentVehicleId = urlParams.get('vid') || 'EV-Alpha';
+let fleetData = [];
+
 // Current telemetry state
-let telemetry = { battery: 85, rpm: 3000, temp: 45, mode: 'eco', running: true };
+let telemetry = { id: currentVehicleId, battery: 85, rpm: 3000, temp: 45, mode: 'eco', running: true };
 let previousTelemetry = { ...telemetry };
 
 // Interaction state
@@ -598,11 +603,11 @@ function updateEnergyFlow(elapsed, delta) {
 }
 
 // =========================================================================
-// DATA FETCHING
+// DATA FETCHING — Core API Loops
 // =========================================================================
 async function fetchTelemetry() {
   try {
-    const res = await fetch('/data');
+    const res = await fetch(`/data/${currentVehicleId}`);
     if (!res.ok) throw new Error('Network response was not ok');
     const data = await res.json();
     previousTelemetry = { ...telemetry };
@@ -614,6 +619,13 @@ async function fetchTelemetry() {
     updateConnectionStatus(false);
   }
 }
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('active-vehicle-title').textContent = `EV DIGITAL TWIN — ${currentVehicleId.split('-')[1].toUpperCase()}`;
+});
+
+// Start telemetry poll
+setInterval(fetchTelemetry, 100);    // 10Hz Focus Poll
 
 // =========================================================================
 // DASHBOARD UI UPDATES
@@ -734,11 +746,11 @@ function updateConnectionStatus(connected) {
   const dot = document.getElementById('status-dot');
   const label = document.getElementById('status-label');
   if (connected) {
-    dot.classList.remove('offline');
-    label.textContent = 'CONNECTED · LIVE DATA';
+    if (dot) dot.classList.remove('offline');
+    if (label) label.textContent = 'CONNECTED · LIVE DATA';
   } else {
-    dot.classList.add('offline');
-    label.textContent = 'DISCONNECTED';
+    if (dot) dot.classList.add('offline');
+    if (label) label.textContent = 'DISCONNECTED';
   }
 }
 
@@ -958,7 +970,7 @@ function formatComponentName(name, type) {
 // =========================================================================
 window.setMode = async function (mode) {
   try {
-    await fetch('/mode', {
+    await fetch(`/mode/${currentVehicleId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ mode }),
@@ -994,7 +1006,7 @@ window.resetOverride = async function (type) {
 
 async function syncOverride(type, value) {
   try {
-    await fetch('/override', {
+    await fetch(`/override/${currentVehicleId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ [type]: parseFloat(value) }),
@@ -1006,7 +1018,7 @@ async function syncOverride(type, value) {
 
 window.toggleSim = async function () {
   try {
-    const res = await fetch('/control', {
+    const res = await fetch(`/control/${currentVehicleId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'toggle' }),
@@ -1031,7 +1043,7 @@ window.closeInfoPanel = function () {
 // =========================================================================
 async function fetchRLStatus() {
   try {
-    const res = await fetch('/rl/status');
+    const res = await fetch(`/rl/status/${currentVehicleId}`);
     if (!res.ok) return;
     const data = await res.json();
     if (data.available) {
@@ -1117,7 +1129,7 @@ function updateAIDashboard(data) {
 
 window.toggleAI = async function () {
   try {
-    const res = await fetch('/rl/control', {
+    const res = await fetch(`/rl/control/${currentVehicleId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'toggle' }),
